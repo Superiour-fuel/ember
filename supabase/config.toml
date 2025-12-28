@@ -1,0 +1,36 @@
+project_id = "oiditkclsuzqnizwdxzj"
+
+[functions.elevenlabs-conversation-token]
+verify_jwt = false
+
+[functions.elevenlabs-voice-clone]
+verify_jwt = false
+
+[functions.elevenlabs-tts]
+verify_jwt = false
+
+[functions.gemini-disambiguate]
+verify_jwt = false
+
+[functions.gemini-vision]
+verify_jwt = false
+
+[functions.smartthings-control]
+verify_jwt = false
+
+[functions.twilio-emergency-call]
+verify_jwt = false
+
+[functions.twilio-sms]
+verify_jwt = false
+
+[functions.gemini-generate-report]
+enabled = true
+verify_jwt = true
+import_map = "./functions/gemini-generate-report/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/gemini-generate-report/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/gemini-generate-report/*.html" ]
