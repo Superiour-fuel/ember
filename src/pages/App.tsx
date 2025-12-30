@@ -17,12 +17,14 @@ import { SceneAnalysis } from "@/components/CameraContext";
 import { LiveCaptionDisplay } from "@/components/LiveCaptionDisplay";
 import { InterpretationDisplay, InterpretationLoading } from '@/components/InterpretationDisplay';
 import { useElevenLabsConversation } from "@/hooks/useElevenLabsConversation";
+import { useBrowserVoice } from "@/hooks/useBrowserVoice"; // TEMPORARY: Browser voice for stable demo
 import { useToast } from "@/hooks/use-toast";
+import { interpretUnclearSpeech } from "@/services/geminiService"; // For browser voice interpretation
 import { useAuth } from "@/hooks/useAuth";
 import { useUserData } from "@/hooks/useUserData";
 import { detectAphasiaPattern } from "@/utils/aphasiaDetector";
 import { storeCorrection, findSimilarCorrection } from "@/utils/correctionStorage";
-import { executeSmartHomeAction, SmartHomeAction, ActionParams, ACTION_LABELS } from "@/services/smartHomeService";
+import { executeSmartHomeAction, SmartHomeAction, ActionParams, ACTION_LABELS, getStoredDevices } from "@/services/smartHomeService";
 import { sendInterpretationSMS } from "@/services/caregiverService";
 import {
   Mic,
@@ -269,6 +271,23 @@ export default function App() {
     onSmartHomeAction: handleSmartHomeAction,
   });
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEMPORARY: Browser voice for stable demo (replacing ElevenLabs)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const {
+    isListening: browserIsListening,
+    startListening: browserStartListening,
+    stopListening: browserStopListening,
+    speak: browserSpeak,
+    isSupported: browserVoiceSupported,
+  } = useBrowserVoice();
+
+  // Use browser listening state instead of ElevenLabs connection state
+  const isActuallyConnected = browserIsListening;
+
+  // Local processing stage state for browser voice
+  const [localProcessingStage, setLocalProcessingStage] = useState<'idle' | 'listening' | 'interpreting'>('idle');
+
   // Polish Feature: Keyboard Shortcuts
   const shortcuts = [
     {
@@ -449,21 +468,191 @@ export default function App() {
     }
   }, []);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEMPORARY: Browser voice toggle (replacing ElevenLabs)
+  // ═══════════════════════════════════════════════════════════════════════════
   const toggleListening = useCallback(() => {
-    if (isConnected) {
-      stopConversation();
+    if (browserIsListening) {
+      browserStopListening();
+      setLocalProcessingStage('idle');
     } else {
-      if (!agentId) {
-        setShowAgentConfig(true);
+      if (!browserVoiceSupported) {
         toast({
-          title: "Agent ID Required",
-          description: "Please enter your ElevenLabs Agent ID to continue.",
+          title: "Browser Not Supported",
+          description: "Please use Google Chrome for voice features.",
+          variant: "destructive",
         });
         return;
       }
-      startConversation();
+
+      setLocalProcessingStage('listening');
+
+      browserStartListening(async (transcript: string) => {
+        console.log('📝 Browser transcript:', transcript);
+        const lowerTranscript = transcript.toLowerCase();
+
+        // Add user message
+        addMessage({
+          type: "user",
+          content: transcript,
+        });
+
+        // ═══════════════════════════════════════════════════════════════════
+        // SMART HOME COMMAND DETECTION
+        // ═══════════════════════════════════════════════════════════════════
+
+        // Lights ON commands
+        const lightsOnKeywords = ['lights on', 'light on', 'turn on the lights', 'turn on lights', 'too dark', "it's dark", 'is dark'];
+        const isLightsOn = lightsOnKeywords.some(k => lowerTranscript.includes(k));
+
+        // Lights OFF commands
+        const lightsOffKeywords = ['lights off', 'light off', 'turn off the lights', 'turn off lights', 'too bright', "it's bright", 'is bright'];
+        const isLightsOff = lightsOffKeywords.some(k => lowerTranscript.includes(k));
+
+        if (isLightsOn || isLightsOff) {
+          const action: SmartHomeAction = isLightsOn ? 'lights_on' : 'lights_off';
+          const actionLabel = isLightsOn ? 'Turning lights on' : 'Turning lights off';
+
+          console.log(`💡 Smart home command detected: ${action}`);
+          setLocalProcessingStage('interpreting');
+
+          // Get stored devices to find the light device ID
+          const storedDevices = getStoredDevices();
+          const lightDevice = storedDevices.lights[0]; // Use first configured light
+          const deviceId = lightDevice?.id;
+
+          console.log('💡 Using light device:', lightDevice?.name || 'none', 'ID:', deviceId || 'none');
+
+          if (!deviceId) {
+            browserSpeak("No lights configured. Please add a light in settings.");
+            toast({
+              title: "No Lights Configured",
+              description: "Go to Settings → Smart Home to add your lights.",
+              variant: "destructive",
+            });
+            setLocalProcessingStage('idle');
+            return;
+          }
+
+          try {
+            // Execute SmartThings action with the device ID
+            const result = await executeSmartHomeAction(action, { deviceId });
+
+            // Dispatch event to update UI (VoiceControlledLights component)
+            window.dispatchEvent(new CustomEvent('ember-voice-command', {
+              detail: { action }
+            }));
+
+            if (result.success) {
+              browserSpeak(actionLabel);
+              addMessage({
+                type: "assistant",
+                content: `✓ ${result.message}`,
+              });
+              toast({
+                title: "Done!",
+                description: result.message,
+              });
+            } else {
+              browserSpeak(`Sorry, I couldn't ${isLightsOn ? 'turn on' : 'turn off'} the lights.`);
+              addMessage({
+                type: "assistant",
+                content: `Failed: ${result.message}`,
+              });
+            }
+          } catch (error) {
+            console.error('Smart home error:', error);
+            browserSpeak(`Sorry, there was an error controlling the lights.`);
+            toast({
+              title: "Smart Home Error",
+              description: "Could not control lights. Check your SmartThings connection.",
+              variant: "destructive",
+            });
+          } finally {
+            setLocalProcessingStage('idle');
+          }
+          return; // Don't run Gemini interpretation for direct commands
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // GEMINI INTERPRETATION (for unclear speech)
+        // ═══════════════════════════════════════════════════════════════════
+        setLocalProcessingStage('interpreting');
+
+        try {
+          const result = await interpretUnclearSpeech(transcript, userProfile, messages);
+
+          if (result) {
+            // Check if Gemini detected a smart home action
+            if (result.action?.type === 'lights_on' || result.action?.type === 'lights_off') {
+              const action = result.action.type;
+              console.log(`💡 Gemini detected smart home action: ${action}`);
+
+              // Get stored devices for the device ID
+              const storedDevices = getStoredDevices();
+              const lightDevice = storedDevices.lights[0];
+              const deviceId = lightDevice?.id;
+
+              if (deviceId) {
+                try {
+                  const smartResult = await executeSmartHomeAction(action, { deviceId });
+                  window.dispatchEvent(new CustomEvent('ember-voice-command', {
+                    detail: { action }
+                  }));
+
+                  if (smartResult.success) {
+                    browserSpeak(result.response || `Done! ${smartResult.message}`);
+                    addMessage({
+                      type: "assistant",
+                      content: `✓ ${smartResult.message}`,
+                    });
+                  }
+                } catch (e) {
+                  console.error('Smart home execution error:', e);
+                }
+              } else {
+                console.log('💡 No light device configured, skipping SmartThings');
+              }
+            }
+
+            setCurrentInterpretation({
+              original: transcript,
+              interpreted: result.interpretation,
+              confidence: result.confidence,
+            });
+
+            // Speak the interpretation using browser TTS
+            if (!result.action) {
+              browserSpeak(`Did you mean: ${result.interpretation}?`);
+            }
+
+            // Add assistant response
+            addMessage({
+              type: "assistant",
+              content: `I think you said: "${result.interpretation}" (${result.confidence}% confident)`,
+            });
+          } else {
+            // Fallback if interpretation fails
+            setCurrentInterpretation({
+              original: transcript,
+              interpreted: transcript,
+              confidence: 50,
+            });
+            browserSpeak(`I heard: ${transcript}. Is that correct?`);
+          }
+        } catch (error) {
+          console.error('Interpretation error:', error);
+          toast({
+            title: "Interpretation Error",
+            description: "Could not interpret speech. Please try again.",
+            variant: "destructive",
+          });
+        } finally {
+          setLocalProcessingStage('idle');
+        }
+      });
     }
-  }, [isConnected, agentId, startConversation, stopConversation, toast]);
+  }, [browserIsListening, browserStartListening, browserStopListening, browserSpeak, browserVoiceSupported, addMessage, messages, userProfile, toast]);
 
   const toggleCamera = useCallback((enabled?: boolean) => {
     const newState = typeof enabled === 'boolean' ? enabled : !isCameraEnabled;
@@ -989,10 +1178,10 @@ export default function App() {
             ))}
 
             {/* Processing stage indicator */}
-            {isConnected && processingStage !== 'idle' && processingStage !== 'listening' && (
+            {localProcessingStage === 'interpreting' && (
               <div className="flex justify-start">
                 <ProcessingIndicator
-                  stage={processingStage === 'responding' ? 'responding' : processingStage}
+                  stage="interpreting"
                   className="max-w-[80%]"
                 />
               </div>
@@ -1013,24 +1202,16 @@ export default function App() {
 
           {/* Voice Visualization - Floating above controls */}
           <div className="absolute bottom-32 inset-x-0 flex justify-center pointer-events-none z-10 opacity-50">
-            <VoiceVisualization isActive={isConnected} />
+            <VoiceVisualization isActive={browserIsListening} />
           </div>
 
           {/* Control Capsule */}
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-3">
             <p className="text-sm font-medium text-black/40 h-5">
-              {isConnecting
-                ? "Connecting..."
-                : isConnected
-                  ? processingStage === 'listening'
-                    ? "Listening..."
-                    : processingStage === 'analyzing'
-                      ? "Understanding..."
-                      : processingStage === 'interpreting'
-                        ? "Interpreting..."
-                        : processingStage === 'responding'
-                          ? "Speaking..."
-                          : "Tap to stop"
+              {localProcessingStage === 'interpreting'
+                ? "Interpreting with Gemini..."
+                : browserIsListening
+                  ? "Listening..."
                   : "Tap to speak"
               }
             </p>
@@ -1046,22 +1227,22 @@ export default function App() {
 
               <button
                 onClick={toggleListening}
-                disabled={isConnecting}
+                disabled={localProcessingStage === 'interpreting'}
                 className={`
                   relative w-16 h-16 rounded-full flex items-center justify-center
-                  transition-all duration-300 focus:outline-none 
+                  transition-all duration-300 focus:outline-none
                   disabled:opacity-50 disabled:cursor-not-allowed
                   group hover:scale-105 active:scale-95
                 `}
-                aria-label={isConnected ? "Stop listening" : "Start listening"}
+                aria-label={browserIsListening ? "Stop listening" : "Start listening"}
               >
                 <div className="absolute inset-0 pointer-events-none opacity-30">
                   <GlowingEffect spread={15} glow={true} disabled={false} proximity={32} inactiveZone={0.01} />
                 </div>
-                <div className={`relative z-10 w-full h-full flex items-center justify-center rounded-full shadow-lg transition-all border-2 ${isConnected ? "bg-white border-white text-black" : "bg-black border-black text-white"} voice-button`}>
-                  {isConnecting ? (
+                <div className={`relative z-10 w-full h-full flex items-center justify-center rounded-full shadow-lg transition-all border-2 ${browserIsListening ? "bg-red-500 border-red-500 text-white animate-pulse" : "bg-black border-black text-white"} voice-button`}>
+                  {localProcessingStage === 'interpreting' ? (
                     <Loader2 className="w-6 h-6 animate-spin" />
-                  ) : isConnected ? (
+                  ) : browserIsListening ? (
                     <MicOff className="w-6 h-6" />
                   ) : (
                     <Mic className="w-6 h-6" />
