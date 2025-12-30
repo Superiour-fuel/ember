@@ -498,6 +498,78 @@ export default function App() {
         });
 
         // ═══════════════════════════════════════════════════════════════════
+        // EMERGENCY HELP DETECTION
+        // ═══════════════════════════════════════════════════════════════════
+        const helpKeywords = ['help', 'i need help', 'help me', 'call for help', 'emergency', 'call 911'];
+        const isHelpRequest = helpKeywords.some(k => lowerTranscript.includes(k));
+
+        if (isHelpRequest) {
+          console.log('🚨 Help request detected:', transcript);
+          setLocalProcessingStage('interpreting');
+
+          if (!emergencyPhone) {
+            browserSpeak("No emergency contact configured. Please add one in settings.");
+            toast({
+              title: "No Emergency Contact",
+              description: "Go to Settings to add your emergency contact number.",
+              variant: "destructive",
+            });
+            addMessage({
+              type: "system",
+              content: "⚠️ No emergency contact configured. Please add one in Settings.",
+            });
+            setLocalProcessingStage('idle');
+            return;
+          }
+
+          try {
+            browserSpeak("Calling your emergency contact now. Stay calm, help is on the way.");
+
+            addMessage({
+              type: "system",
+              content: "🚨 Calling emergency contact...",
+            });
+
+            // Call Twilio edge function
+            const { data, error } = await supabase.functions.invoke('twilio-emergency-call', {
+              body: {
+                phoneNumber: emergencyPhone,
+                message: `Emergency alert from Ember. Your contact said: "${transcript}". They may need immediate assistance.`,
+                userName: profile?.display_name || 'Your contact',
+              },
+            });
+
+            console.log('Twilio response:', { data, error });
+
+            if (error) throw error;
+
+            if (data?.success) {
+              toast({
+                title: "Emergency Call Initiated",
+                description: "Your emergency contact is being called now.",
+              });
+              addMessage({
+                type: "system",
+                content: "✅ Emergency call initiated. Help is on the way.",
+              });
+            } else {
+              throw new Error(data?.error || 'Call failed');
+            }
+          } catch (error) {
+            console.error('Emergency call error:', error);
+            browserSpeak("Sorry, I couldn't make the emergency call. Please try again or call manually.");
+            toast({
+              title: "Call Failed",
+              description: error instanceof Error ? error.message : "Could not make emergency call",
+              variant: "destructive",
+            });
+          } finally {
+            setLocalProcessingStage('idle');
+          }
+          return; // Don't continue to other processing
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
         // SMART HOME COMMAND DETECTION
         // ═══════════════════════════════════════════════════════════════════
 
