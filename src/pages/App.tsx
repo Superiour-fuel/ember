@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button";
 import { EmberLogo } from "@/components/EmberLogo";
 import { VoiceVisualization } from "@/components/VoiceVisualization";
 import { PersonalizationSidebar } from "@/components/PersonalizationSidebar";
+import { Switch } from "@/components/ui/switch";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { AphasiaDisambiguation } from "@/components/AphasiaDisambiguation";
@@ -12,6 +15,7 @@ import { UrgentAlert } from "@/components/UrgentAlert";
 import { ActionConfirmation } from "@/components/ActionConfirmation";
 import { SceneAnalysis } from "@/components/CameraContext";
 import { LiveCaptionDisplay } from "@/components/LiveCaptionDisplay";
+import { InterpretationDisplay, InterpretationLoading } from '@/components/InterpretationDisplay';
 import { useElevenLabsConversation } from "@/hooks/useElevenLabsConversation";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -55,6 +59,18 @@ import html2canvas from "html2canvas";
 import { supabase } from "@/integrations/supabase/client";
 import geminiIcon from "@/assets/gemini-icon.png";
 
+// Polish Features
+import { DemoMode } from '@/components/DemoMode';
+import { celebrateSuccess, celebrateEmergency, celebrateFirstSuccess } from '@/utils/celebrations';
+import { voiceFeedback } from '@/utils/voiceFeedback';
+import { AccuracyMetrics } from '@/components/AccuracyMetrics';
+import { useAccuracyStats } from '@/hooks/useAccuracyStats';
+import { useKeyboardShortcuts, ShortcutHints } from '@/hooks/useKeyboardShortcuts';
+import { OnboardingTour } from '@/components/OnboardingTour';
+import { handleInterpretationError, withGracefulFallback } from '@/utils/errorHandling';
+import { useIsMobile } from '@/hooks/useIsMobile';
+import { Ear, Brain, MessageCircle } from 'lucide-react';
+
 // ElevenLabs Agent ID - configured via environment variable for flexibility
 // Fallback to hardcoded ID for development convenience
 const ELEVENLABS_AGENT_ID = import.meta.env.VITE_ELEVENLABS_AGENT_ID || "agent_5901kdgw48dgeg797zq619xzcmed";
@@ -96,74 +112,18 @@ export default function App() {
   } | null>(null);
 
   // Handle Smart Home actions requested by voice
-  const handleSmartHomeAction = useCallback((action: SmartHomeAction, params: ActionParams & { confirmationRequired?: boolean, message?: string }) => {
-    if (params.confirmationRequired) {
-      setPendingAction({
-        action,
-        params,
-        message: params.message || `Confirm ${ACTION_LABELS[action]}?`,
-        brand: 'smartthings'
-      });
-    } else {
-      // Execute immediately if no confirmation needed (or simple direct command)
-      // But for consistency with existing direct command handling in hook,
-      // the hook usually executes directly. This callback is primarily for when
-      // manual handling/confirmation from the UI is requested.
-      // However, if the hook calls this, it EXPECTS us to handle it.
-      setPendingAction({
-        action,
-        params,
-        message: params.message || `Confirm ${ACTION_LABELS[action]}?`,
-        brand: 'default' // Or executeSmartHomeAction immediately?
-      });
-      // The previous logic in hook for direct commands calls executeSmartHomeAction.
-      // This callback is specifically for the 'too dark' path which REQUIRES confirmation.
-    }
-  }, []);
-
-  const {
-    messages,
-    isConnecting,
-    isConnected,
-    isSpeaking,
-    isDisambiguating,
-    processingStage,
-    startConversation,
-    stopConversation,
-    addMessage,
-    disambiguateSpeech,
-  } = useElevenLabsConversation({
-    agentId,
-    enableDisambiguation: true,
-    userProfile,
-    visualContext: sceneContext,
-    emergencyContactPhone: emergencyPhone,
-    emergencyContactMethod: emergencyMethod,
-    userName: profile?.display_name || undefined,
-    onAphasiaDetected: handleAphasiaDetected,
-    onUrgentDetected: handleUrgentDetected,
-    onSmartHomeAction: handleSmartHomeAction,
-  });
-
-  // ...
-
-  {/* Action Confirmation Modal */ }
-  {
-    pendingAction && (
-      <ActionConfirmation
-        action={pendingAction.action}
-        actionParams={pendingAction.params}
-        message={pendingAction.message}
-        onConfirm={handleActionConfirm}
-        onCancel={handleActionCancel}
-        brand={pendingAction.brand}
-      />
-    )
-  }
   const [lastActionResult, setLastActionResult] = useState<{
     success: boolean;
     message: string;
   } | null>(null);
+
+  // Polish Features State
+  const [demoModeEnabled, setDemoModeEnabled] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [voiceFeedbackEnabled, setVoiceFeedbackEnabled] = useState(true);
+  const [interpretationCount, setInterpretationCount] = useState(0);
+  const { stats, addRecord } = useAccuracyStats();
+  const isMobile = useIsMobile();
 
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -225,6 +185,33 @@ export default function App() {
     }
   }, [user, profile]);
 
+  const handleSmartHomeAction = useCallback((action: SmartHomeAction, params: ActionParams & { confirmationRequired?: boolean, message?: string }) => {
+    if (params.confirmationRequired) {
+      setPendingAction({
+        action,
+        params,
+        message: params.message || `Confirm ${ACTION_LABELS[action]}?`,
+        brand: 'smartthings'
+      });
+    } else {
+      // Execute immediately if no confirmation needed (or simple direct command)
+      // But for consistency with existing direct command handling in hook,
+      // the hook usually executes directly. This callback is primarily for when
+      // manual handling/confirmation from the UI is requested.
+      // However, if the hook calls this, it EXPECTS us to handle it.
+      setPendingAction({
+        action,
+        params,
+        message: params.message || `Confirm ${ACTION_LABELS[action]}?`,
+        brand: 'default' // Or executeSmartHomeAction immediately?
+      });
+      // The previous logic in hook for direct commands calls executeSmartHomeAction.
+      // This callback is specifically for the 'too dark' path which REQUIRES confirmation.
+    }
+  }, []);
+
+
+
   // Handle aphasia detection callback from voice conversation
   const handleAphasiaDetected = useCallback((request: {
     original: string;
@@ -241,25 +228,19 @@ export default function App() {
 
   const handleUrgentDetected = useCallback((situation: {
     urgencyLevel: 'CRITICAL' | 'URGENT' | 'IMPORTANT';
-    message: string;
-    interpretation: string;
-    actionRequired?: string | null;
   }) => {
     console.log("Urgent situation detected:", situation);
     setUrgentSituation(situation);
+
+    // Also update detected context if interpretation available
+    if (situation.interpretation) {
+      // We can maybe use a specialized state for this, but for now just log
+    }
   }, []);
 
-  // Handle Smart Home actions requested by voice
-  const handleSmartHomeAction = useCallback((action: SmartHomeAction, params: ActionParams & { confirmationRequired?: boolean, message?: string }) => {
-    // Always require confirmation if routed through this callback from the hook
-    setPendingAction({
-      action,
-      params,
-      message: params.message || `Confirm ${ACTION_LABELS[action]}?`,
-      brand: params.confirmationRequired ? 'smartthings' : 'default'
-    });
-  }, []);
 
+
+  // Test function to simulate fragmented aphasia speech
   const {
     messages,
     isConnecting,
@@ -271,6 +252,10 @@ export default function App() {
     stopConversation,
     addMessage,
     disambiguateSpeech,
+    currentInterpretation: hookCurrentInterpretation,
+    isInterpreting,
+    confirmInterpretation,
+    rejectInterpretation
   } = useElevenLabsConversation({
     agentId,
     enableDisambiguation: true,
@@ -284,7 +269,92 @@ export default function App() {
     onSmartHomeAction: handleSmartHomeAction,
   });
 
-  // Test function to simulate fragmented aphasia speech
+  // Polish Feature: Keyboard Shortcuts
+  const shortcuts = [
+    {
+      key: ' ',
+      action: () => {
+        if (!isConnected) toggleListening();
+        else stopConversation();
+      },
+      description: 'Start/stop recording'
+    },
+    {
+      key: 'Enter',
+      action: () => {
+        if (currentInterpretation) handleConfirm(currentInterpretation.interpreted);
+      },
+      description: 'Confirm interpretation'
+    },
+    {
+      key: 'Escape',
+      action: () => {
+        if (currentInterpretation) handleReject();
+      },
+      description: 'Reject interpretation'
+    },
+    {
+      key: 'd',
+      ctrlKey: true,
+      action: () => setDemoModeEnabled(prev => !prev),
+      description: 'Toggle demo mode'
+    },
+    {
+      key: '?',
+      shiftKey: true,
+      action: () => setShowShortcuts(prev => !prev),
+      description: 'Show shortcuts'
+    }
+  ];
+
+  useKeyboardShortcuts(shortcuts, true);
+
+  // Polish Feature: Voice Feedback for interpretations
+  useEffect(() => {
+    if (currentInterpretation && voiceFeedbackEnabled) {
+      voiceFeedback.speakInterpretation(currentInterpretation.interpreted);
+    }
+  }, [currentInterpretation, voiceFeedbackEnabled]);
+
+  const handleConfirm = useCallback((selectedText: string) => {
+    const isFirstSuccess = interpretationCount === 0;
+
+    if (isFirstSuccess) {
+      celebrateFirstSuccess();
+      toast({
+        title: "🎉 First interpretation successful!",
+        description: "You're using Ember like a pro!"
+      });
+    } else {
+      celebrateSuccess();
+      toast({ title: "Got it! ✅" });
+    }
+
+    if (voiceFeedbackEnabled) {
+      voiceFeedback.speakConfirmation(selectedText);
+    }
+
+    addRecord({
+      input: currentInterpretation?.original || "",
+      interpretation: selectedText,
+      confidence: currentInterpretation?.confidence || 0,
+      wasCorrect: true
+    });
+
+    setInterpretationCount(prev => prev + 1);
+    confirmInterpretation(selectedText);
+  }, [interpretationCount, currentInterpretation, confirmInterpretation, addRecord, toast, voiceFeedbackEnabled]);
+
+  const handleReject = useCallback(() => {
+    addRecord({
+      input: currentInterpretation?.original || "",
+      interpretation: currentInterpretation?.interpreted || "",
+      confidence: currentInterpretation?.confidence || 0,
+      wasCorrect: false
+    });
+    rejectInterpretation();
+  }, [currentInterpretation, rejectInterpretation, addRecord]);
+
   const simulateAphasiaSpeech = useCallback(async (testPhrase: string = "want... coffee... hot...") => {
     // Check for aphasia pattern
     const aphasiaCheck = detectAphasiaPattern(testPhrase);
@@ -484,6 +554,12 @@ export default function App() {
     setUrgentSituation(null);
   }, [urgentSituation]);
 
+  // Wrap Emergency handler with red confetti
+  const handleUrgentCallHelpWithCelebration = useCallback(async () => {
+    celebrateEmergency();
+    await handleUrgentCallHelp();
+  }, [handleUrgentCallHelp]);
+
   // Smart home action handlers
   const handleActionConfirm = useCallback(async () => {
     if (!pendingAction) return;
@@ -513,6 +589,7 @@ export default function App() {
 
   return (
     <div className="h-screen overflow-hidden bg-[#4ade80] flex flex-col text-black selection:bg-black selection:text-[#4ade80]">
+      <OnboardingTour />
       {/* Decorative noise/texture overlay */}
       <div className="fixed inset-0 pointer-events-none opacity-[0.03] mix-blend-overlay z-0"
         style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }}>
@@ -671,7 +748,7 @@ export default function App() {
               >
                 <FileText className="w-4 h-4" />
                 Generate PDF with Gemini
-                <img src={geminiIcon} alt="Gemini" className="w-5 h-5 ml-1" />
+                <img src={geminiIcon} alt="Gemini" className="w-5 h-5 ml-1 object-contain" />
               </Button>
             </div>
             <Button
@@ -720,7 +797,7 @@ export default function App() {
               size="icon"
               onClick={() => setShowSidebar(!showSidebar)}
               aria-label={showSidebar ? "Hide sidebar" : "Show sidebar"}
-              className="hidden md:flex text-black hover:bg-black/10"
+              className="hidden md:flex text-black hover:bg-black/10 settings-panel"
             >
               {showSidebar ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
             </Button>
@@ -781,6 +858,23 @@ export default function App() {
                 {isConnected ? "Connected" : isConnecting ? "Connecting..." : "Disconnected"}
               </span>
             </div>
+
+            {/* Polish Feature: Interpretation UI */}
+            {(isInterpreting || currentInterpretation) && (
+              <div className="w-full max-w-xl interpretation-display">
+                {isInterpreting ? (
+                  <InterpretationLoading />
+                ) : (
+                  <InterpretationDisplay
+                    originalText={currentInterpretation!.original}
+                    interpretation={currentInterpretation!.interpreted}
+                    confidence={currentInterpretation!.confidence}
+                    onConfirm={handleConfirm}
+                    onReject={handleReject}
+                  />
+                )}
+              </div>
+            )}
           </div>
 
           {/* Action Confirmation Modal */}
@@ -967,7 +1061,7 @@ export default function App() {
                 <div className="absolute inset-0 pointer-events-none opacity-30">
                   <GlowingEffect spread={15} glow={true} disabled={false} proximity={32} inactiveZone={0.01} />
                 </div>
-                <div className={`relative z-10 w-full h-full flex items-center justify-center rounded-full shadow-lg transition-all border-2 ${isConnected ? "bg-white border-white text-black" : "bg-black border-black text-white"}`}>
+                <div className={`relative z-10 w-full h-full flex items-center justify-center rounded-full shadow-lg transition-all border-2 ${isConnected ? "bg-white border-white text-black" : "bg-black border-black text-white"} voice-button`}>
                   {isConnecting ? (
                     <Loader2 className="w-6 h-6 animate-spin" />
                   ) : isConnected ? (
@@ -995,7 +1089,7 @@ export default function App() {
                       message: 'help... need... someone...',
                       interpretation: 'I need help, please contact someone',
                     })}
-                    className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                    className="text-red-600 focus:text-red-600 focus:bg-red-50 emergency-button"
                   >
                     Alert Emergency
                   </DropdownMenuItem>
@@ -1022,6 +1116,66 @@ export default function App() {
                 onContextUpdate={handleContextUpdate}
                 className="border-0 p-0 bg-transparent"
               />
+
+              {/* Polish Features in Sidebar */}
+              <div className="space-y-4">
+                <div className="demo-mode-toggle">
+                  <DemoMode
+                    isEnabled={demoModeEnabled}
+                    onToggle={setDemoModeEnabled}
+                    onPhraseClick={(phrase: DemoPhrase) => {
+                      setCurrentInterpretation({
+                        original: phrase.input,
+                        interpreted: phrase.interpretation,
+                        confidence: phrase.confidence,
+                      });
+                    }}
+                  />
+                </div>
+
+                <div className="accuracy-metrics">
+                  <AccuracyMetrics stats={stats} />
+                </div>
+
+                {/* Voice Feedback Toggle */}
+                <div className="bg-white rounded-2xl border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] overflow-hidden">
+                  <div className="px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-[#4ade80] rounded-lg flex items-center justify-center border-2 border-black">
+                        <Volume2 className="w-4 h-4 text-black" />
+                      </div>
+                      <div>
+                        <span className="text-sm font-black text-black uppercase tracking-tight">Voice Feedback</span>
+                        <p className="text-xs text-black/50">Speak interpretations aloud</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={voiceFeedbackEnabled}
+                      onCheckedChange={setVoiceFeedbackEnabled}
+                      className="data-[state=checked]:bg-black"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowShortcuts(!showShortcuts)}
+                  className="w-full px-4 py-3 bg-white rounded-2xl border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[2px] hover:translate-y-[2px] transition-all flex items-center justify-center gap-2 font-black text-black uppercase tracking-tight text-sm"
+                >
+                  <Keyboard className="w-4 h-4" />
+                  {showShortcuts ? "Hide Shortcuts" : "Keyboard Shortcuts"}
+                </button>
+
+                {showShortcuts && (
+                  <div className="bg-white rounded-2xl border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] overflow-hidden">
+                    <div className="bg-black/5 px-4 py-2 border-b-2 border-black/10">
+                      <p className="text-xs font-bold text-black/50 uppercase tracking-wide">Quick Actions</p>
+                    </div>
+                    <div className="p-4">
+                      <ShortcutHints shortcuts={shortcuts} />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Settings Overlay */}

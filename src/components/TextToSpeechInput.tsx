@@ -5,6 +5,7 @@ import { Volume2, Loader2, Sparkles, Zap, Mic } from 'lucide-react';
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAccessibility } from "@/contexts/AccessibilityContext";
+import geminiIcon from "@/assets/gemini-icon.png";
 
 export interface TextToSpeechInputHandle {
     speak: (text?: string) => void;
@@ -154,6 +155,9 @@ export const TextToSpeechInput = forwardRef<TextToSpeechInputHandle, { onSpeak?:
 
             {/* Smart Rephrasing Bar */}
             <div className="flex gap-2">
+                <div className="flex items-center justify-center p-2 bg-white rounded-lg border border-black/10">
+                    <img src={geminiIcon} alt="Gemini" className="w-5 h-5 object-contain" />
+                </div>
                 {(Object.keys(TONE_PRESETS) as Tone[]).map((tone) => {
                     const preset = TONE_PRESETS[tone];
                     const isLoading = isRephrasing === tone;

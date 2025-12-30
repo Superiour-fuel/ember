@@ -2,13 +2,15 @@ Ember
 
 # ember.
 
+**Try Ember:** [https://ember-orcin.vercel.app](https://ember-orcin.vercel.app)
+
 **Restoring the human connection.**
 
-Ember is an AI-powered voice accessibility assistant designed for people with speech disabilities such as ALS/MND, stroke-induced aphasia, and dysarthria. It moves beyond traditional AAC devices by using your own voice—cloned and preserved—or a reconstructed version of it, to communicate instantly and naturally.
+Ember is an AI-powered voice accessibility assistant designed for people with speech disabilities such as ALS/MND, stroke-induced aphasia, and dysarthria. It moves beyond traditional AAC devices by using your own voice - cloned and preserved - or a reconstructed version of it, to communicate instantly and naturally.
 
 ## 🚀 Mission
 
-To ensure that no one loses their unique identity when they lose their ability to speak. We believe in "Voice Independence"—privacy-first, local-processing, and zero-latency communication.
+To ensure that no one loses their unique identity when they lose their ability to speak. We believe in "Voice Independence": privacy-first, local-processing, and zero-latency communication.
 
 ## ✨ Key Features
 
@@ -23,7 +25,7 @@ To ensure that no one loses their unique identity when they lose their ability t
 ## 🛠️ Technology Stack
 
 *   **Frontend:** React, Vite, Tailwind CSS, shadcn/ui
-*   **AI/LLM:** Google Gemini 1.5 Flash (Reasoning, Vision, Rephrasing)
+*   **AI/LLM:** Google Gemini 2.0 Flash (Reasoning, Vision, Rephrasing)
 *   **Voice:** ElevenLabs (Voice Cloning, TTS, Speech-to-Text)
 *   **Backend:** Supabase (Auth, Database, Edge Functions)
 *   **Communication:** Twilio (Emergency SMS/Call)
@@ -144,7 +146,7 @@ ember/
 ├── supabase/
 │   └── functions/      # Edge functions (9 total)
 ├── public/             # Static assets
-└── EMBER_DOCUMENTATION.md  # Full technical docs
+└── README.md
 
 ```
 

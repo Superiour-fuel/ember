@@ -588,7 +588,21 @@ export default function Setup() {
         const conditionString = conditions.join(',');
         await updateProfile({ condition: conditionString });
         await updateSettings({ context_preferences: conditions });
+      } else {
+        // Guest/Hackathon user: Save to localStorage
+        const existingProfileJson = localStorage.getItem('ember_user_profile');
+        const existingProfile = existingProfileJson ? JSON.parse(existingProfileJson) : {};
+
+        const updatedProfile = {
+          ...existingProfile,
+          conditions: conditions, // Save selected conditions
+          updated_at: new Date().toISOString()
+        };
+
+        localStorage.setItem('ember_user_profile', JSON.stringify(updatedProfile));
+        console.log("Saved guest profile to localStorage:", updatedProfile);
       }
+
       const calibrationData = calibrationPhrases.filter(p => p.audioBlob);
       await secureVoiceStorage.setCalibrationExamples(calibrationData, user?.id);
     } catch (e) {

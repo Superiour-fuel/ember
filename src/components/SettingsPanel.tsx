@@ -17,7 +17,8 @@ import {
   ChevronRight,
   Zap,
   Check,
-  Loader2
+  Loader2,
+  Pencil
 } from "lucide-react";
 import { SmartHomeSettings } from "@/components/SmartHomeSettings";
 import { CaregiverContacts } from "@/components/CaregiverContacts";
@@ -50,6 +51,10 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const [emergencyContactMethod, setEmergencyContactMethod] = useState<'call' | 'whatsapp' | 'sms'>('whatsapp');
   const [isSaving, setIsSaving] = useState(false);
 
+  // Name editing state
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [tempName, setTempName] = useState("");
+
   const { toast } = useToast();
   const { user, signOut } = useAuth();
   const {
@@ -57,6 +62,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     settings,
     voiceBank,
     updateSettings,
+    updateProfile,
     deleteVoiceBank,
     isLoading
   } = useUserData();
@@ -70,6 +76,33 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       setEmergencyContactMethod((settings.emergency_contact_method as 'call' | 'whatsapp' | 'sms') || 'whatsapp');
     }
   }, [settings]);
+
+  // Sync tempName when profile loads
+  useEffect(() => {
+    if (profile?.display_name) {
+      setTempName(profile.display_name);
+    } else if (user?.email) {
+      setTempName("User");
+    }
+  }, [profile, user]);
+
+  const handleSaveName = async () => {
+    if (!tempName.trim()) {
+      toast({ title: "Name cannot be empty", variant: "destructive" });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await updateProfile({ display_name: tempName });
+      setIsEditingName(false);
+      toast({ title: "Name updated" });
+    } catch (e) {
+      toast({ title: "Failed to update name", variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Save settings
   const saveSettings = async () => {
@@ -177,8 +210,28 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               <div className="w-12 h-12 bg-[#4ade80] rounded-lg flex items-center justify-center font-black text-xl text-black border-2 border-white">
                 {profile?.display_name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase()}
               </div>
-              <div className="overflow-hidden">
-                <h3 className="text-lg font-bold truncate">{profile?.display_name || "User"}</h3>
+              <div className="overflow-hidden flex-1">
+                {isEditingName ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={tempName}
+                      onChange={(e) => setTempName(e.target.value)}
+                      className="h-8 text-black bg-white font-bold"
+                      autoFocus
+                    />
+                    <Button size="icon" variant="ghost" className="h-8 w-8 text-green-400 hover:text-green-300 hover:bg-white/20" onClick={handleSaveName}>
+                      <Check className="w-4 h-4" />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-white/20" onClick={() => { setIsEditingName(false); setTempName(profile?.display_name || "User"); }}>
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 group/name cursor-pointer" onClick={() => { setIsEditingName(true); setTempName(profile?.display_name || "User"); }}>
+                    <h3 className="text-lg font-bold truncate">{profile?.display_name || "User"}</h3>
+                    <Pencil className="w-3 h-3 opacity-0 group-hover/name:opacity-100 transition-opacity text-gray-400" />
+                  </div>
+                )}
                 <p className="text-xs font-medium opacity-70 truncate">{user.email}</p>
               </div>
             </div>

@@ -19,7 +19,8 @@ import {
   ArrowRight,
   Zap,
   Shield,
-  Heart
+  Heart,
+  Quote
 } from "lucide-react";
 
 
@@ -486,6 +487,24 @@ export default function Landing() {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        {/* Testimonial Section */}
+        <section className="bg-white text-black py-32 border-t-8 border-black">
+          <div className="container mx-auto px-6 text-center">
+            <div className="max-w-5xl mx-auto relative">
+              <Quote className="w-24 h-24 text-[#4ade80] absolute -top-12 -left-4 md:-left-12 opacity-50 transform -rotate-12" />
+              <h2 className="text-3xl md:text-5xl lg:text-6xl font-black leading-tight mb-12 relative z-10">
+                "After my stroke, I couldn't speak clearly to my grandchildren. With ember, I can finally tell them 'I love you' again. This was typed using the app."
+              </h2>
+              <div className="inline-flex items-center gap-3 bg-black text-white px-6 py-3 rounded-full border-2 border-transparent shadow-[4px_4px_0px_0px_rgba(74,222,128,1)] hover:scale-105 transition-transform">
+                <div className="w-2 h-2 rounded-full bg-[#4ade80] animate-pulse" />
+                <p className="font-bold text-sm md:text-base tracking-wide uppercase">
+                  Based on feedback from nursing home residents
+                </p>
+              </div>
             </div>
           </div>
         </section>

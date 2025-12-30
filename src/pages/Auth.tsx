@@ -257,6 +257,33 @@ export default function Auth() {
                 </button>
               </div>
 
+              {/* Hackathon Bypass Button */}
+              <div className="mt-6 pt-6 border-t border-black/10 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Bypass logic: Set necessary local storage to simulate a user
+                    localStorage.removeItem('ember_setup_complete'); // Ensure setup is NOT marked as complete
+
+                    // Set a mock profile so they have a name, but let Setup handle conditions
+                    localStorage.setItem('ember_user_profile', JSON.stringify({
+                      display_name: 'Hackathon Judge',
+                      conditions: [], // Setup will fill this
+                    }));
+
+                    toast({
+                      title: "Hackathon Mode Activated",
+                      description: "Proceeding to Onboarding Setup...",
+                    });
+                    navigate('/setup');
+                  }}
+                  className="text-xs font-bold text-black/40 hover:text-black hover:underline transition-colors flex items-center justify-center gap-1 mx-auto"
+                >
+                  <Lock className="w-3 h-3" />
+                  Hackathon Bypass (Skip Auth)
+                </button>
+              </div>
+
             </div>
           </div>
 

@@ -2,7 +2,8 @@ import { useState, useCallback, useRef } from "react";
 import { useConversation } from "@elevenlabs/react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { detectAphasiaPattern } from "@/utils/aphasiaDetector";
+import { isUnclearSpeech, getSpeechCategory } from "@/utils/speechDetection";
+import { interpretUnclearSpeech, GeminiInterpretation } from "@/services/geminiService";
 import { findSimilarCorrection } from "@/utils/correctionStorage";
 import { getStoredDevices, executeSmartHomeAction, SmartHomeAction, getActionFromVisualCommand } from "@/services/smartHomeService";
 
@@ -10,10 +11,11 @@ export interface Message {
   id: string;
   type: "user" | "assistant" | "system";
   content: string;
-  interpretation?: string;
+  interpretation?: string | GeminiInterpretation;
   alternatives?: string[];
   confidence?: number;
   timestamp: Date;
+  isUnclear?: boolean;
 }
 
 export interface DisambiguationResult {
@@ -97,6 +99,8 @@ export function useElevenLabsConversation({
   const [isConnecting, setIsConnecting] = useState(false);
   const [isDisambiguating, setIsDisambiguating] = useState(false);
   const [processingStage, setProcessingStage] = useState<ProcessingStage>('idle');
+  const [currentInterpretation, setCurrentInterpretation] = useState<GeminiInterpretation | null>(null);
+  const [isInterpreting, setIsInterpreting] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -144,16 +148,46 @@ export function useElevenLabsConversation({
   // Keep ref updated
   addMessageRef.current = addMessage;
 
-  // Manual TTS using ElevenLabs Edge Function (Cloned Voice)
+  // Manual TTS using ElevenLabs Edge Function (Cloned Voice) with Browser Fallback
   const speakResponse = useCallback(async (text: string) => {
-    try {
-      setProcessingStage('responding');
-      console.log('Generating speech for response:', text);
+    setProcessingStage('responding');
+    console.log('Generating speech for response:', text);
 
+    const speakWithBrowser = () => {
+      console.log('Inputting to browser TTS fallback...');
+      const utterance = new SpeechSynthesisUtterance(text);
+
+      // Default settings for clarity
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+
+      // Try to get a high quality voice
+      const voices = window.speechSynthesis.getVoices();
+      const preferredVoice = voices.find(voice =>
+        (voice.name.includes('Google') || voice.name.includes('Premium') || voice.name.includes('Enhanced')) &&
+        voice.lang.startsWith('en')
+      ) || voices.find(voice => voice.lang.startsWith('en'));
+
+      if (preferredVoice) utterance.voice = preferredVoice;
+
+      utterance.onend = () => {
+        setProcessingStage('listening');
+      };
+
+      utterance.onerror = (e) => {
+        console.error("Browser TTS Error:", e);
+        setProcessingStage('listening'); // Ensure we go back to listening even on error
+      };
+
+      window.speechSynthesis.speak(utterance);
+    };
+
+    try {
       const { data, error } = await supabase.functions.invoke('elevenlabs-tts', {
         body: {
           text,
-          voice_id: userProfile?.calibration_examples?.[0]?.audioBlob ? undefined : 'EXAVITQu4vr4xnSDxMaL', // Use default if no cloned voice (TODO: Fetch actual voice ID)
+          voice_id: userProfile?.calibration_examples?.[0]?.audioBlob ? undefined : 'EXAVITQu4vr4xnSDxMaL',
           stability: 0.5,
           similarity_boost: 0.75,
         }
@@ -171,17 +205,18 @@ export function useElevenLabsConversation({
         URL.revokeObjectURL(url);
       };
 
+      audio.onerror = (e) => {
+        console.error("Audio object playback error:", e);
+        speakWithBrowser(); // Fallback if audio element fails
+      };
+
       await audio.play();
     } catch (err) {
-      console.error('Failed to speak response:', err);
-      toast({
-        title: "Speech Error",
-        description: "Could not play audio response.",
-        variant: "destructive"
-      });
-      setProcessingStage('listening');
+      console.warn('ElevenLabs TTS failed or edge function unavailable. Falling back to browser TTS.', err);
+      // Silently fall back to browser TTS instead of showing error toast
+      speakWithBrowser();
     }
-  }, [userProfile, toast]);
+  }, [userProfile]);
 
   // Disambiguate unclear speech using Gemini AI
   const disambiguateSpeech = useCallback(async (transcript: string): Promise<DisambiguationResult | null> => {
@@ -611,10 +646,10 @@ export function useElevenLabsConversation({
         }
 
         // Check for aphasia patterns
-        const aphasiaCheck = detectAphasiaPattern(transcript);
-        console.log("Aphasia detection result:", aphasiaCheck);
+        const unclearCheck = isUnclearSpeech(transcript);
+        console.log("Unclear speech check:", unclearCheck);
 
-        if (aphasiaCheck.isLikelyAphasia && enableDisambiguation) {
+        if (unclearCheck && enableDisambiguation) {
           // Check for previously learned corrections
           const previousCorrection = findSimilarCorrection(transcript);
 
@@ -643,110 +678,77 @@ export function useElevenLabsConversation({
             speakResponse(responseText);
 
           } else {
-            // Run disambiguation and show modal if confidence is low
-            setIsDisambiguating(true);
+            // Use new Interpretation Service
+            setIsInterpreting(true);
             setProcessingStage('interpreting');
-            disambiguateSpeech(transcript).then((result) => {
-              setIsDisambiguating(false);
 
-              // Check for urgent situation first
-              if (result?.urgency_level) {
-                console.log("Urgent situation detected:", result.urgency_level);
-                onUrgentDetected?.({
-                  urgencyLevel: result.urgency_level,
-                  message: transcript,
-                  interpretation: result.interpretation,
-                  actionRequired: result.action_required,
-                });
+            interpretUnclearSpeech(transcript, userProfile, messages).then((result) => {
+              setIsInterpreting(false);
 
-                // Update message with urgency info
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === userMessage.id
-                      ? {
-                        ...m,
-                        interpretation: result.interpretation,
-                        confidence: result.confidence,
-                      }
-                      : m
-                  )
-                );
+              if (result) {
+                // Set current interpretation for valid confirmation UI
+                setCurrentInterpretation(result);
 
-                // Speak urgent response
-                if (result.response) {
-                  addMessage({ type: "assistant", content: result.response });
-                  speakResponse(result.response);
-                }
+                // Check for urgent situation first - using normalized levels
+                if (result.category === 'urgent' || (result.action?.type === 'emergency_call')) {
+                  const urgencyLevel = 'URGENT'; // Default to URGENT
+                  console.log("Urgent situation detected:", urgencyLevel);
+                  onUrgentDetected?.({
+                    urgencyLevel: urgencyLevel,
+                    message: transcript,
+                    interpretation: result.interpretation,
+                    actionRequired: result.action?.type === 'emergency_call' ? 'call_caregiver' : null,
+                  });
 
-              } else if (result && (result.confidence < 80 || result.requires_confirmation)) {
-                // Notify parent to show disambiguation modal
-                const alternatives = [
-                  { text: result.interpretation, confidence: result.confidence },
-                  ...(result.alternatives || []).slice(0, 2).map((alt, i) => ({
-                    text: alt,
-                    confidence: Math.max(10, result.confidence - (20 * (i + 1)))
-                  }))
-                ].slice(0, 3);
+                  // Speak urgent response
+                  if (result.response) {
+                    addMessage({ type: "assistant", content: result.response });
+                    speakResponse(result.response);
+                  }
+                } else {
+                  // Standard interpretation flow
+                  if (result.confidence < 80) {
+                    // Notify parent/show UI for confirmation
+                    // We update the message with interpretation data
+                    setMessages((prev) =>
+                      prev.map((m) =>
+                        m.id === userMessage.id
+                          ? {
+                            ...m,
+                            interpretation: result,
+                            confidence: result.confidence,
+                            isUnclear: true
+                          }
+                          : m
+                      )
+                    );
+                  } else {
+                    // High confidence - accept it
+                    setMessages((prev) =>
+                      prev.map((m) =>
+                        m.id === userMessage.id
+                          ? {
+                            ...m,
+                            interpretation: result.interpretation, // Store string for compat or object? object better
+                            confidence: result.confidence,
+                          }
+                          : m
+                      )
+                    );
 
-                onAphasiaDetected?.({
-                  original: transcript,
-                  alternatives,
-                  messageId: userMessage.id,
-                });
-              } else if (result) {
-                // High confidence - update message and SPEAK
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === userMessage.id
-                      ? {
-                        ...m,
-                        interpretation: result.interpretation,
-                        alternatives: result.alternatives,
-                        confidence: result.confidence,
-                      }
-                      : m
-                  )
-                );
-
-                if (result.response) {
-                  addMessage({ type: "assistant", content: result.response });
-                  speakResponse(result.response);
+                    if (result.response) {
+                      addMessage({ type: "assistant", content: result.response });
+                      speakResponse(result.response);
+                    }
+                  }
                 }
               }
             });
           }
         } else {
-          // Clear speech handling - still route through Gemini for consistent personality/voice
-          setProcessingStage('interpreting');
-          disambiguateSpeech(transcript).then(async (result) => {
-            if (result) {
-              // Update UI with interpretation
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === userMessage.id
-                    ? {
-                      ...m,
-                      interpretation: result.interpretation,
-                      alternatives: result.alternatives,
-                      confidence: result.confidence,
-                    }
-                    : m
-                )
-              );
-
-              // SPEAK THE RESPONSE (Gemini is the brain)
-              if (result.response) {
-                // Display assistant message
-                addMessage({
-                  type: "assistant",
-                  content: result.response,
-                });
-
-                // Speak it
-                await speakResponse(result.response);
-              }
-            }
-          });
+          // Clear speech - maybe still run interpretation if it's a question?
+          // For now, if it's clear, we assume the Agent (ElevenLabs) handles it, OR we do nothing extra
+          setCurrentInterpretation(null);
         }
       }
 
@@ -758,18 +760,7 @@ export function useElevenLabsConversation({
     },
     onError: (error) => {
       console.error("ElevenLabs conversation error:", error);
-
-      // Attempt to extract more specific error info
-      const err = error as any;
-      const errorMessage = typeof err === 'string' ? err :
-        err instanceof Error ? err.message :
-          JSON.stringify(err);
-
-      toast({
-        title: "Connection Error",
-        description: `Failed to connect: ${errorMessage}`,
-        variant: "destructive",
-      });
+      // ERROR TOAST REMOVED PER USER REQUEST
     },
   });
 
@@ -861,5 +852,21 @@ export function useElevenLabsConversation({
     disambiguateSpeech,
     addMessage,
     setMessages,
+    currentInterpretation,
+    isInterpreting,
+    confirmInterpretation: async (selectedText: string) => {
+      console.log('✅ User confirmed:', selectedText);
+      setCurrentInterpretation(null);
+      const assistantMessage = { id: `msg-${Date.now()}`, type: 'assistant' as const, content: `I understand: "${selectedText}"`, timestamp: new Date() };
+      setMessages(prev => [...prev, assistantMessage]);
+      await speakResponse(`I understand: ${selectedText}`);
+    },
+    rejectInterpretation: () => {
+      console.log('❌ User rejected interpretation');
+      setCurrentInterpretation(null);
+      const assistantMessage = { id: `msg-${Date.now()}`, type: 'assistant' as const, content: "Sorry, I didn't understand. Please try again.", timestamp: new Date() };
+      setMessages(prev => [...prev, assistantMessage]);
+      speakResponse("Sorry, I didn't understand. Please try again.");
+    }
   };
 }

@@ -3,6 +3,7 @@ import { Volume2, Maximize2, Minimize2, X, Hand, CheckCircle } from 'lucide-reac
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import geminiIcon from "@/assets/gemini-icon.png";
 
 interface CaptionEntry {
   id: string;
@@ -147,10 +148,11 @@ export function LiveCaptionDisplay({
                 <div className="flex items-center justify-between pt-4">
                   <div
                     className={cn(
-                      "px-3 py-1.5 rounded-full border text-sm font-medium",
+                      "px-3 py-1.5 rounded-full border text-sm font-medium flex items-center gap-2",
                       getConfidenceColor(confidence)
                     )}
                   >
+                    <img src={geminiIcon} alt="Gemini" className="w-4 h-4 object-contain" />
                     {confidence}% Confidence
                   </div>
 

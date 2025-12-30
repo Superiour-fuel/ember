@@ -1,0 +1,78 @@
+/* Mobile-specific optimizations */
+
+@media (max-width: 768px) {
+  /* Larger touch targets */
+  .voice-button {
+    min-width: 64px;
+    min-height: 64px;
+    font-size: 18px;
+  }
+
+  button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Prevent text selection on buttons */
+  button,
+  .interactive {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  /* Larger fonts for readability */
+  .interpretation-text {
+    font-size: 18px;
+    line-height: 1.6;
+  }
+
+  /* Full-width cards on mobile */
+  .interpretation-display,
+  .demo-mode,
+  .accuracy-metrics {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  /* Fixed positioning for key elements */
+  .voice-button-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+  }
+
+  /* Prevent zoom on input focus */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  /* Safe area for notch/home indicator */
+  .main-container {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Landscape mobile */
+@media (max-width: 768px) and (orientation: landscape) {
+  .voice-button-container {
+    bottom: 10px;
+  }
+
+  .main-content {
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+  }
+}
+
+/* Tablet adjustments */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .container {
+    max-width: 90%;
+  }
+}
