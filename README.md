@@ -172,6 +172,7 @@ Contact:
 
 Built for: ElevenLabs + Google Cloud AI Partner Catalyst Hackathon 2025
 
+much love!
 Developer: Manoj Kumar
 Email: Manoj07ar@gmail.com
 LinkedIn: https://www.linkedin.com/in/manoj07ar/
