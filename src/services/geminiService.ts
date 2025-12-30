@@ -27,13 +27,13 @@ export async function interpretUnclearSpeech(
 
         const { data, error } = await supabase.functions.invoke('gemini-disambiguate', {
             body: {
-                message,
-                user_profile: userProfile || {
+                transcript: message,  // Edge function expects 'transcript'
+                userProfile: userProfile || {
                     name: 'User',
                     conditions: ['dysarthria', 'aphasia'],
                     preferences: {}
                 },
-                conversation_history: conversationHistory || []
+                conversationHistory: conversationHistory || []
             }
         });
 

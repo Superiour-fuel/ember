@@ -544,7 +544,8 @@ export default function Landing() {
 
       {/* ElevenLabs Conversational AI Widget */}
       <div className="fixed bottom-4 right-4 z-50">
-        <elevenlabs-convai agent-id="agent_5901kdgw48dgeg797zq619xzcmed"></elevenlabs-convai>
+        {/* @ts-ignore */}
+        <elevenlabs-convai agent-id="agent_1501kdrjksqdftrv1em1pmhx7akk"></elevenlabs-convai>
       </div>
     </div>
   );

@@ -309,12 +309,12 @@ export default function App() {
 
   useKeyboardShortcuts(shortcuts, true);
 
-  // Polish Feature: Voice Feedback for interpretations
-  useEffect(() => {
-    if (currentInterpretation && voiceFeedbackEnabled) {
-      voiceFeedback.speakInterpretation(currentInterpretation.interpreted);
-    }
-  }, [currentInterpretation, voiceFeedbackEnabled]);
+  // DISABLED: Voice Feedback for interpretations - Caused feedback loop
+  // useEffect(() => {
+  //   if (currentInterpretation && voiceFeedbackEnabled) {
+  //     voiceFeedback.speakInterpretation(currentInterpretation.interpreted);
+  //   }
+  // }, [currentInterpretation, voiceFeedbackEnabled]);
 
   const handleConfirm = useCallback((selectedText: string) => {
     const isFirstSuccess = interpretationCount === 0;
@@ -408,24 +408,21 @@ export default function App() {
     }
   }, [addMessage, disambiguateSpeech, toast]);
 
-  // Update confidence and interpretation from actual conversation data
+  // Sync hookCurrentInterpretation to local state format (only when hook has data)
   useEffect(() => {
-    const lastUserMsg = [...messages].reverse().find(m => m.type === 'user');
-
-    if (lastUserMsg) {
-      // Update confidence if available
-      if (typeof lastUserMsg.confidence === 'number') {
-        setConfidence(lastUserMsg.confidence);
-      }
-
-      // Update current interpretation state
+    if (hookCurrentInterpretation) {
+      // Get the latest user message for the original text
+      const lastUserMsg = [...messages].reverse().find(m => m.type === 'user');
       setCurrentInterpretation({
-        original: lastUserMsg.content,
-        interpreted: lastUserMsg.interpretation || lastUserMsg.content,
-        confidence: lastUserMsg.confidence || 0,
+        original: lastUserMsg?.content || '',
+        interpreted: hookCurrentInterpretation.interpretation,
+        confidence: hookCurrentInterpretation.confidence,
       });
+      setConfidence(hookCurrentInterpretation.confidence);
+    } else {
+      setCurrentInterpretation(null);
     }
-  }, [messages]);
+  }, [hookCurrentInterpretation, messages]);
 
   // Update detected context from scene analysis
   const handleContextUpdate = useCallback((context: {

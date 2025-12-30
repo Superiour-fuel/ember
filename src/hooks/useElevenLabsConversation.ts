@@ -112,6 +112,9 @@ export function useElevenLabsConversation({
   const { toast } = useToast();
   const messageIdRef = useRef(0);
 
+  // Processing lock to prevent feedback loops
+  const isProcessingRef = useRef(false);
+
   // Refs for stable callbacks - allows clientTools to be truly stable
   const emergencyContactPhoneRef = useRef(emergencyContactPhone);
   const emergencyContactMethodRef = useRef(emergencyContactMethod);
@@ -539,6 +542,13 @@ export function useElevenLabsConversation({
       });
     },
     onMessage: async (message: unknown) => {
+      // PROCESSING LOCK - Prevent feedback loops
+      if (isProcessingRef.current) {
+        console.log('🚫 Already processing, skipping message');
+        return;
+      }
+      isProcessingRef.current = true;
+
       console.log("Received message from agent:", JSON.stringify(message, null, 2));
 
       // Cast to access properties
@@ -546,6 +556,13 @@ export function useElevenLabsConversation({
       const messageType = msg.type as string | undefined;
       const source = msg.source as string | undefined;
       const role = msg.role as string | undefined;
+
+      // STOP ALL AGENT AUTO-RESPONSES - Early exit for AI/agent messages
+      if (source === 'ai' || source === 'agent' || role === 'assistant' || role === 'agent') {
+        console.log('🚫 Blocking agent auto-response (source/role):', source || role);
+        isProcessingRef.current = false;
+        return;
+      }
 
       // Try to extract transcript from various possible message formats
       let transcript: string | undefined;
@@ -579,14 +596,21 @@ export function useElevenLabsConversation({
         // We filter out common phrases where the Agent repeats back or asks for clarification
         if (
           transcript.includes('Did you mean') ||
-          transcript.includes('Let me know if') ||
+          transcript.includes('I understand') ||
+          transcript.includes('Let me know') ||
           transcript.includes('Is that correct') ||
           transcript.includes('I think you said') ||
+          transcript.includes('Could you clarify') ||
+          transcript.includes('I heard you say') ||
           (transcript.startsWith('I ') && !transcript.toLowerCase().startsWith('i want') && !transcript.toLowerCase().startsWith('i need')) // Agent talking about itself, but allow "I want/need"
         ) {
           console.log('🚫 Ignoring Agent auto-response:', transcript);
+          isProcessingRef.current = false;
           return;
         }
+
+        // Only process if it's from USER
+        console.log('✅ Processing user speech:', transcript);
 
         // Set processing stage to analyzing
         setProcessingStage('analyzing');
@@ -603,9 +627,24 @@ export function useElevenLabsConversation({
 
         console.log("Processing voice command - original:", lowerTranscript, "normalized:", normalizedTranscript);
 
-        // Check for emergency/help commands
-        const helpKeywords = ['help', 'emergency', 'call for help', 'need help', 'h-h-help', 'he-help'];
-        if (helpKeywords.some(k => normalizedTranscript.includes(k) || lowerTranscript.includes(k))) {
+        // Check for emergency/help commands - STRICT matching to prevent false positives
+        // Only trigger on explicit help requests, not casual "help" mentions
+        const strictHelpPhrases = [
+          'call for help',
+          'need help',
+          'help me',
+          'help please',
+          'i need help',
+          'emergency',
+          'call 911',
+          'h-h-help',
+          'he-help'
+        ];
+        const isExplicitHelpRequest = strictHelpPhrases.some(phrase =>
+          lowerTranscript.includes(phrase) || normalizedTranscript.includes(phrase)
+        );
+
+        if (isExplicitHelpRequest) {
           console.log('🚨 Direct help command detected:', transcript);
           clientTools.call_for_help({ urgency_level: 'URGENT', message: transcript });
         }
@@ -620,10 +659,11 @@ export function useElevenLabsConversation({
             urgency: 'normal'
           });
 
-          // Acknowledge partially
-          const ack = "It seems dark. Checking lights.";
+          // Acknowledge partially - NO TTS to prevent feedback
+          const ack = "It seems dark. Should I turn on the lights?";
           addMessage({ type: "assistant", content: ack });
-          speakResponse("Should I turn on the lights?");
+          // speakResponse removed to prevent feedback loop
+          isProcessingRef.current = false;
           return;
         }
 
@@ -672,10 +712,10 @@ export function useElevenLabsConversation({
               description: `Using your preference: "${previousCorrection}"`,
             });
 
-            // Speak confirmation
+            // Add confirmation message - NO TTS to prevent feedback
             const responseText = `I understand, you want ${previousCorrection}`;
             addMessage({ type: "assistant", content: responseText });
-            speakResponse(responseText);
+            // speakResponse removed to prevent feedback loop
 
           } else {
             // Use new Interpretation Service
@@ -700,10 +740,10 @@ export function useElevenLabsConversation({
                     actionRequired: result.action?.type === 'emergency_call' ? 'call_caregiver' : null,
                   });
 
-                  // Speak urgent response
+                  // Add urgent response message - NO TTS to prevent feedback
                   if (result.response) {
                     addMessage({ type: "assistant", content: result.response });
-                    speakResponse(result.response);
+                    // speakResponse removed to prevent feedback loop
                   }
                 } else {
                   // Standard interpretation flow
@@ -738,11 +778,13 @@ export function useElevenLabsConversation({
 
                     if (result.response) {
                       addMessage({ type: "assistant", content: result.response });
-                      speakResponse(result.response);
+                      // speakResponse removed to prevent feedback loop
                     }
                   }
                 }
               }
+              // Release lock after async interpretation completes
+              isProcessingRef.current = false;
             });
           }
         } else {
@@ -757,6 +799,9 @@ export function useElevenLabsConversation({
       if (messageType === "agent_response") {
         console.log("Ignored default agent response (Transcription Mode active)");
       }
+
+      // Release processing lock at end
+      isProcessingRef.current = false;
     },
     onError: (error) => {
       console.error("ElevenLabs conversation error:", error);
@@ -859,14 +904,14 @@ export function useElevenLabsConversation({
       setCurrentInterpretation(null);
       const assistantMessage = { id: `msg-${Date.now()}`, type: 'assistant' as const, content: `I understand: "${selectedText}"`, timestamp: new Date() };
       setMessages(prev => [...prev, assistantMessage]);
-      await speakResponse(`I understand: ${selectedText}`);
+      // speakResponse removed to prevent feedback loop
     },
     rejectInterpretation: () => {
       console.log('❌ User rejected interpretation');
       setCurrentInterpretation(null);
       const assistantMessage = { id: `msg-${Date.now()}`, type: 'assistant' as const, content: "Sorry, I didn't understand. Please try again.", timestamp: new Date() };
       setMessages(prev => [...prev, assistantMessage]);
-      speakResponse("Sorry, I didn't understand. Please try again.");
+      // speakResponse removed to prevent feedback loop
     }
   };
 }
